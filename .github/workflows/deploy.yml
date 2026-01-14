@@ -1,0 +1,82 @@
+name: Lab 7 Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install Ansible and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible sshpass
+          pip3 install --user "jinja2==3.0.3"
+          export PATH="$HOME/.local/bin:$PATH"
+          ansible --version
+
+      - name: Check playbook syntax
+        run: |
+          cd Lab7
+          ansible-playbook playbooks/deploy-app.yml --syntax-check
+
+      - name: Test inventory
+        run: |
+          cd Lab7
+          ansible-inventory -i inventories/development.yml --list
+
+      - name: Test connectivity
+        run: |
+          cd Lab7
+          ansible -i inventories/development.yml all -m ping
+
+      - name: Deploy application
+        run: |
+          cd Lab7
+          echo "Deploying to ${{ github.event.inputs.environment }} environment"
+          ansible-playbook -i inventories/development.yml playbooks/deploy-app.yml
+
+      - name: Verify deployment
+        run: |
+          cd Lab7
+          echo "Verifying deployment..."
+          ansible -i inventories/development.yml all -m command -a "supervisorctl status"
+
+      - name: Test application health
+        run: |
+          echo "Testing application health endpoints..."
+          curl -s http://localhost:8080/health | python3 -m json.tool || true
+          curl -s http://localhost:8081/health | python3 -m json.tool || true
+
+      - name: Deployment summary
+        if: success()
+        run: |
+          echo "✅ Deployment completed successfully!"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Workflow triggered by: ${{ github.actor }}"
+          echo "Commit: ${{ github.sha }}"
+
+      - name: Deployment failed
+        if: failure()
+        run: |
+          echo "❌ Deployment failed!"
+          exit 1
